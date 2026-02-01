@@ -1,34 +1,39 @@
-use std::{net::TcpStream};
+use std::{net::TcpStream, io};
 mod shared;
-// use crate::shared;
-// use shared;
 
-fn start_connect(address: &str) {
-    match TcpStream::connect(address) {
-        Ok(_client_con) => {
-            handle_connection(_client_con);
-        },
-        Err(err) => {
-            panic!("Could not connect to socket: {:?}", err);
-        }
-    }
+fn start_connect(address: &str) -> io::Result<()> {
+    let mut stream = TcpStream::connect(address)?;
+    handle_connection(&mut stream)?;
+    Ok(())
 }
-fn handle_connection(client_con: TcpStream) {
-    println!("Connected to socket, Connection: {:?}", client_con);
-    let first_message = shared::TcpMessage::new(5, Vec::from([0, 1, 2, 3]));
-    let bytes_written = shared::write_to_socket(&client_con, first_message);
-    println!("Bytes written: {}", bytes_written);
-    let read_data = shared::read_from_socket(&client_con);
-    println!("read data: {:?}", read_data.to_bytes());
+
+fn handle_connection(stream: &mut TcpStream) -> io::Result<()> {
+    let messages = vec![
+        (5, vec![0, 1, 2, 3, 4]),
+        (0, vec![]),  // Empty payload
+        (3, vec![10, 20, 30]),
+    ];
     
+    for (length, payload) in messages {
+        let msg = shared::TcpMessage::new(length, payload)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        
+        let bytes_written = shared::write_to_socket(stream, &msg)?;
+        println!("Sent {} bytes", bytes_written);
+        
+        let reply = shared::read_from_socket(stream)?;
+        println!("Received: length={}, payload={:?}", reply.length, reply.payload);
+    }
+    
+    Ok(())
 }
 
 fn main() {
     let address = "127.0.0.1:4002";
-    let mut c = 100;
-    while c > 0 {
-        start_connect(&address);
-        c -= 1
+    
+    match start_connect(address) {
+        Ok(_) => println!("Connection successful"),
+        Err(e) => eprintln!("Connection failed: {}", e),
     }
 }
 

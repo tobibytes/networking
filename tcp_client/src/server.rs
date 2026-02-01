@@ -1,36 +1,68 @@
-use std::{net::{SocketAddr, TcpListener, TcpStream}, thread};
+use std::{net::{TcpListener, TcpStream}, thread};
 use crate::shared;
+
 pub fn start_server(address: &str) {
     let server = match TcpListener::bind(address) {
         Ok(_server) => _server,
-        Err(err) => panic!("Could not bind to address {}: {:?}", address, err)
+        Err(err) => {
+            eprintln!("Could not bind to address {}: {:?}", address, err);
+            return;
+        }
     };
     println!("Started listening on address {}", address);
-    loop {
-        match server.accept() {
-            Ok((sock, addr)) => {
+    
+    for result in server.incoming() {
+        match result {
+            Ok(sock) => {
+                sock.set_read_timeout(Some(std::time::Duration::from_secs(shared::READ_TIMEOUT))).ok();
                 thread::spawn(move || {
-                handle_connection(sock, addr);
-                })
+                    handle_connection(sock);
+                });
             }
             Err(err) => {
-                close_socket(server, err);
+                eprintln!("Error accepting connection: {:?}", err);
+            }
+        }
+    }
+}
+
+fn handle_connection(mut sock: TcpStream) {
+    let peer_addr = sock.peer_addr().ok();
+    
+    loop {
+        match shared::read_from_socket(&mut sock) {
+            Ok(message) => {
+                println!(
+                    "Received from {:?}: length={}, payload={:?}",
+                    peer_addr, message.length, message.payload
+                );
+                
+                // Echo back the message
+                let response = match shared::TcpMessage::new(message.length, message.payload.clone()) {
+                    Ok(msg) => msg,
+                    Err(e) => {
+                        eprintln!("Invalid message: {}", e);
+                        break;
+                    }
+                };
+                
+                if let Err(e) = shared::write_to_socket(&mut sock, &response) {
+                    eprintln!("Error writing response: {:?}", e);
+                    break;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                println!("Client {:?} disconnected cleanly", peer_addr);
                 break;
             }
-        };
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                eprintln!("Read timeout from {:?}", peer_addr);
+                break;
+            }
+            Err(e) => {
+                eprintln!("Error reading from {:?}: {:?}", peer_addr, e);
+                break;
+            }
+        }
     }
-
-}
-fn handle_connection(sock: TcpStream, _addr: SocketAddr) {
-    let read_buffer= shared::read_from_socket(&sock);
-    println!("read buffer: {:?}", read_buffer.to_bytes());
-    let send_message = shared::TcpMessage::new(10, Vec::from([5, 10, 20, 50, 7, 8, 2, 4, 9]));
-    let sent_data = shared::write_to_socket(&sock, send_message);
-    println!("write buffer: {:?}", sent_data);
-
-}
-
-fn close_socket(server: TcpListener, err: std::io::Error ) {
-    drop(server);
-    panic!("Could not accept client connection: {:?}", err);
 }
