@@ -1,6 +1,5 @@
 use std::{net::{TcpListener, TcpStream}, thread};
 use crate::shared;
-
 pub fn start_server(address: &str) {
     let server = match TcpListener::bind(address) {
         Ok(_server) => _server,
